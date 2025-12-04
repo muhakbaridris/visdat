@@ -1,6 +1,3 @@
-library(rsconnect)
-rsconnect::writeManifest()
-
 # ========================================================================
 #  DIGITAL ECOSYSTEM DASHBOARD — PREMIUM APPLE EDITION
 #  BAGIAN 1 — SETUP, LOAD DATA, PREPROCESS, AGGREGATION, GLOBAL OBJECTS
