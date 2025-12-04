@@ -19,6 +19,8 @@ library(corrplot)
 library(igraph)
 library(visNetwork)
 library(countrycode)  # Untuk konversi kode negara
+if (!require(countrycode)) install.packages("countrycode")
+library(countrycode)
 
 cat("\n=== Digital Ecosystem Dashboard — Setup Data Engine ===\n")
 
