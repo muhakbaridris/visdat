@@ -1126,7 +1126,7 @@ ui <- fluidPage(
                        h4("Desy Endriani"),
                        div(class="team-role", "Data Analyst"),
                        p("Menganalisis pola data, membuat visualisasi, dan menerjemahkan insight bisnis dari data."),
-                       div(class="team-nim", "NIM: M0501241077")
+                       div(class="team-nim", "NIM: M0501241051")
                    )),
             
             column(3,
@@ -1150,7 +1150,7 @@ ui <- fluidPage(
                        h4("Syaifullah Yusuf Ramadhan"),
                        div(class="team-role", "Data Engineer & Web Scraper"),
                        p("Mengumpulkan, membersihkan, dan memproses data dari berbagai sumber melalui web scraping."),
-                       div(class="team-nim", "NIM: M0501241051")
+                       div(class="team-nim", "NIM: M0501241077")
                    ))
           ),
           
