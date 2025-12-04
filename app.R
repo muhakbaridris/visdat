@@ -2062,9 +2062,7 @@ server <- function(input, output, session) {
       var_data <- na.omit(data[[input$stat_variable_x]])
       
       if (length(var_data) > 0) {
-        cat("=================================\n")
         cat("ANALISIS STATISTIK\n")
-        cat("=================================\n")
         cat("Variabel:", gsub("_", " ", input$stat_variable_x), "\n")
         cat("Tahun:", ifelse(input$stat_year == "Semua Tahun", "Semua Tahun", input$stat_year), "\n")
         cat("Jumlah Observasi:", length(var_data), "\n\n")
@@ -2076,10 +2074,9 @@ server <- function(input, output, session) {
         cat("Rata-rata   :", round(mean(var_data), 3), "\n")
         cat("Kuartil 3   :", round(quantile(var_data, 0.75), 3), "\n")
         cat("Maksimum    :", round(max(var_data), 3), "\n")
-        cat("Standar Dev:", round(sd(var_data), 3), "\n")
+        cat("Standar Dev :", round(sd(var_data), 3), "\n")
         cat("IQR         :", round(IQR(var_data), 3), "\n")
         cat("Varians     :", round(var(var_data), 3), "\n")
-        cat("\n=================================\n")
       } else {
         cat("Tidak ada data untuk variabel dan tahun yang dipilih.")
       }
