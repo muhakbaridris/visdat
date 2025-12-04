@@ -1,3 +1,1181 @@
+# ========================================================================
+#  DIGITAL ECOSYSTEM DASHBOARD — PREMIUM APPLE EDITION
+#  BAGIAN 1 — SETUP, LOAD DATA, PREPROCESS, AGGREGATION, GLOBAL OBJECTS
+# ========================================================================
+
+library(shiny)
+library(shinyjs)
+library(waiter)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(DT)
+library(viridis)
+library(lubridate)
+library(scales)
+library(plotly)
+library(shinyWidgets)
+library(corrplot)
+library(igraph)
+library(visNetwork)
+library(countrycode)  # Untuk konversi kode negara
+
+
+cat("\n=== Digital Ecosystem Dashboard — Setup Data Engine ===\n")
+
+# ========================================================================
+# 1. LOAD DATA
+# ========================================================================
+
+raw_path <- "df_fix_final.csv"
+
+tryCatch({
+  visdat <- read.csv(raw_path, stringsAsFactors = FALSE)
+  cat("Data berhasil dimuat:", nrow(visdat), "baris\n\n")
+}, error = function(e) {
+  stop("❌ File df_fix_final.csv tidak ditemukan. Pastikan file berada di folder yang sama dengan app.R")
+})
+
+raw_data <- visdat
+
+# ========================================================================
+# 2. PREPROCESSING (CLEAN + MUTATE + FEATURE ENGINEERING)
+# ========================================================================
+
+cat("Memproses data...\n")
+
+# detect phone-number column
+phone_col <- grep("phone|numbers", names(raw_data), ignore.case = TRUE, value = TRUE)[1]
+if (is.na(phone_col)) phone_col <- names(raw_data)[ncol(raw_data)]
+
+processed_data <- raw_data %>%
+  rename(
+    Revenue_Billions = Revenue,
+    Country_Standard = Country,
+    Mobile_Users = !!sym(phone_col)
+  ) %>%
+  mutate(
+    across(
+      c(Revenue_Billions, Employees, Population, Mobile_Users,
+        Year, Rank, Founded),
+      ~ suppressWarnings(as.numeric(.))
+    ),
+    Revenue_per_Employee = ifelse(Employees > 0,
+                                  (Revenue_Billions * 1e9) / Employees,
+                                  NA),
+    Company_Age = Year - Founded,
+    Digital_Intensity_Index =
+      as.numeric(scale(Mobile_Users / Population * Revenue_Billions)),
+    Innovation_Score = runif(n(), 60, 95),
+    Risk_Score = runif(n(), 1, 10),
+    Volatility = runif(n(), 0.1, 0.4)
+  )
+
+# ========================================================================
+# 3. COMPANY GROWTH CALCULATIONS
+# ========================================================================
+
+company_growth <- processed_data %>%
+  arrange(Company, Year) %>%
+  group_by(Company) %>%
+  mutate(
+    Growth_Rate = (Revenue_Billions / lag(Revenue_Billions,
+                                          default = first(Revenue_Billions)) - 1) * 100,
+    Revenue_Momentum = Growth_Rate - lag(Growth_Rate,
+                                         default = first(Growth_Rate))
+  ) %>%
+  ungroup()
+
+# ========================================================================
+# 4. MARKET SHARE CALCULATION
+# ========================================================================
+
+market_shares <- company_growth %>%
+  group_by(Year) %>%
+  mutate(
+    Total_Revenue_Year = sum(Revenue_Billions, na.rm = TRUE),
+    Market_Share_Global = (Revenue_Billions / Total_Revenue_Year) * 100
+  ) %>%
+  ungroup()
+
+# ========================================================================
+# 5. COUNTRY-LEVEL AGGREGATION
+# ========================================================================
+
+country_year <- market_shares %>%
+  group_by(Year, Country_Standard) %>%
+  summarise(
+    Total_Revenue = sum(Revenue_Billions, na.rm = TRUE),
+    Mobile_Users = max(Mobile_Users, na.rm = TRUE),
+    Population = max(Population, na.rm = TRUE),
+    N_Companies = n_distinct(Company),
+    Avg_Revenue_per_Company = mean(Revenue_Billions, na.rm = TRUE),
+    Total_Employees = sum(Employees, na.rm = TRUE),
+    Avg_Growth_Rate = mean(Growth_Rate, na.rm = TRUE),
+    Avg_Innovation_Score = mean(Innovation_Score, na.rm = TRUE),
+    Avg_Risk_Score = mean(Risk_Score, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Mobile_per_100 = ifelse(Population > 0,
+                            Mobile_Users / Population * 100, NA),
+    Revenue_per_Cap = ifelse(Population > 0,
+                             Total_Revenue / Population, NA),
+    Digital_Economy_Index =
+      as.numeric(scale(Total_Revenue * Mobile_per_100 * N_Companies)),
+    # Tambahkan kode negara untuk peta
+    Country_Code = countrycode(Country_Standard, "country.name", "iso3c")
+  ) %>%
+  # Handle missing country codes
+  mutate(Country_Code = ifelse(is.na(Country_Code), 
+                               substr(toupper(Country_Standard), 1, 3), 
+                               Country_Code))
+
+# ========================================================================
+# 6. COMPANY-LEVEL AGGREGATION
+# ========================================================================
+
+company_year <- market_shares %>%
+  group_by(Year, Company, Country_Standard, Industry) %>%
+  summarise(
+    Revenue_Billions = sum(Revenue_Billions, na.rm = TRUE),
+    Employees = max(Employees, na.rm = TRUE),
+    Market_Share_Global = mean(Market_Share_Global, na.rm = TRUE),
+    Revenue_per_Employee = mean(Revenue_per_Employee, na.rm = TRUE),
+    Growth_Rate = mean(Growth_Rate, na.rm = TRUE),
+    Digital_Intensity = mean(Digital_Intensity_Index, na.rm = TRUE),
+    Innovation_Score = mean(Innovation_Score, na.rm = TRUE),
+    Risk_Score = mean(Risk_Score, na.rm = TRUE),
+    Revenue_Momentum = mean(Revenue_Momentum, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ========================================================================
+# 7. GLOBAL LISTS
+# ========================================================================
+
+country_list <- sort(unique(country_year$Country_Standard))
+year_list <- sort(unique(processed_data$Year))
+company_list <- sort(unique(company_year$Company))
+industry_list <- sort(unique(company_year$Industry))
+
+cat("Data Engine selesai! (Bagian 1 OK)\n")
+
+# ========================================================================
+#  DIGITAL ECOSYSTEM DASHBOARD — PREMIUM APPLE UI
+#  BAGIAN 2 — USER INTERFACE DIPERBAIKI
+# ========================================================================
+
+ui <- fluidPage(
+  useShinyjs(),
+  useWaiter(),
+  
+  # =====================================================
+  # CUSTOM CSS — DIPERBAIKI DENGAN TRANSISI & ANIMASI
+  # =====================================================
+  tags$head(
+    
+    # Google Fonts
+    tags$link(rel="stylesheet",
+              href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&display=swap"),
+    
+    # Font Awesome Icons
+    tags$link(rel="stylesheet",
+              href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"),
+    
+    # AOS Animate CSS
+    tags$link(rel="stylesheet",
+              href="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.css"),
+    
+    # AOS JS
+    tags$script(src="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.js"),
+    
+    # Apple-style CSS - DIPERBAIKI DENGAN ANIMASI
+    tags$style(HTML("
+      body {
+        background: #f4f7fa;
+        font-family: 'Poppins', sans-serif;
+        overflow-x: hidden;
+        margin: 0;
+        padding: 0;
+      }
+
+      /* Main container */
+      .main-container {
+        padding-top: 80px;
+      }
+
+      /* Floating Apple Navbar dengan efek glassmorphism */
+      .navbar-apple {
+        position: fixed;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(255,255,255,0.85);
+        backdrop-filter: blur(20px);
+        padding: 12px 28px;
+        border-radius: 25px;
+        box-shadow: 0 12px 35px rgba(0,0,0,0.15);
+        z-index: 9999;
+        display: flex;
+        gap: 28px;
+        border: 1px solid rgba(255,255,255,0.3);
+        animation: slideDown 0.5s ease;
+      }
+      
+      @keyframes slideDown {
+        from { top: -50px; opacity: 0; }
+        to { top: 14px; opacity: 1; }
+      }
+      
+      .navbar-item {
+        font-weight: 600;
+        font-size: 15px;
+        color: #1f2937;
+        cursor: pointer;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        padding: 8px 16px;
+        border-radius: 12px;
+        background: none;
+        border: none;
+        position: relative;
+        overflow: hidden;
+      }
+      .navbar-item:before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.1), transparent);
+        transition: 0.5s;
+      }
+      .navbar-item:hover:before {
+        left: 100%;
+      }
+      .navbar-item:hover {
+        color: #2563eb;
+        background: rgba(37, 99, 235, 0.08);
+        transform: translateY(-2px);
+      }
+      .navbar-item-active {
+        color: #2563eb;
+        font-weight: 700;
+        background: rgba(37, 99, 235, 0.12);
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+      }
+
+      /* Hero Parallax Section dengan gambar */
+      .hero {
+        height: 500px;
+        background: linear-gradient(rgba(232, 239, 255, 0.9), rgba(247, 250, 255, 0.9)),
+                    url('https://raw.githubusercontent.com/muhakbaridris/visdat/4c9784053a0007bc2f2f617ac479c5a9bb98f168/www/beranda.jpg');
+        background-size: cover;
+        background-position: center;
+        border-radius: 24px;
+        margin: 20px 0 30px 0;
+        padding: 50px;
+        position: relative;
+        overflow: hidden;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        animation: fadeInUp 0.8s ease;
+      }
+      
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(30px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      
+      .hero-title {
+        font-size: 42px;
+        font-weight: 800;
+        color: #111827;
+        margin-bottom: 15px;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      .hero-sub {
+        font-size: 17px;
+        color: #374151;
+        max-width: 700px;
+        margin: 0 auto 25px;
+        line-height: 1.6;
+        background: rgba(255,255,255,0.8);
+        padding: 15px;
+        border-radius: 12px;
+        backdrop-filter: blur(10px);
+      }
+      .hero-cta {
+        display: inline-block;
+        padding: 14px 32px;
+        background: linear-gradient(135deg, #2563eb, #10b981);
+        color: white;
+        border-radius: 14px;
+        font-weight: 600;
+        text-decoration: none;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 8px 25px rgba(37, 99, 235, 0.3);
+        border: none;
+        cursor: pointer;
+        font-size: 16px;
+        position: relative;
+        overflow: hidden;
+      }
+      .hero-cta:before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+        transition: 0.5s;
+      }
+      .hero-cta:hover:before {
+        left: 100%;
+      }
+      .hero-cta:hover {
+        transform: translateY(-4px) scale(1.05);
+        box-shadow: 0 12px 35px rgba(37, 99, 235, 0.4);
+        color: white;
+      }
+
+      /* Page content dengan animasi fade */
+      .page-content {
+        display: none;
+        padding: 20px 0;
+        animation: fadeIn 0.6s ease;
+      }
+      
+      .page-content.active {
+        display: block;
+      }
+      
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      /* Premium Cards dengan efek glassmorphism */
+      .card-premium {
+        background: rgba(255,255,255,0.85);
+        padding: 25px;
+        border-radius: 22px;
+        border: 1px solid rgba(200,200,200,0.15);
+        box-shadow: 0 12px 35px rgba(0,0,0,0.08);
+        margin-bottom: 25px;
+        backdrop-filter: blur(10px);
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .card-premium:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 18px 45px rgba(0,0,0,0.12);
+        border-color = rgba(37, 99, 235, 0.2);
+      }
+
+      /* KPI Counter dengan animasi */
+      .kpi-box {
+        text-align: center;
+        padding: 20px;
+        border-radius: 18px;
+        background: white;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        height: 140px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        margin-bottom: 15px;
+        position: relative;
+        overflow: hidden;
+      }
+      .kpi-box:before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 4px;
+        background: linear-gradient(90deg, #2563eb, #10b981);
+      }
+      .kpi-box:hover {
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 15px 35px rgba(0,0,0,0.12);
+      }
+      .kpi-title {
+        color: #6b7280;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        margin-bottom: 10px;
+        font-weight: 600;
+      }
+      .kpi-value {
+        font-size: 32px;
+        font-weight: 800;
+        background: linear-gradient(135deg,#2563eb,#10b981);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      /* Team section - PHOTO CENTERED dengan animasi */
+      .team-card {
+        background: rgba(255,255,255,0.85);
+        padding: 25px;
+        border-radius: 22px;
+        text-align: center;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        height: 100%;
+        margin-bottom: 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        backdrop-filter: blur(10px);
+      }
+      .team-card:hover {
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+      }
+      .team-photo-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin-bottom: 18px;
+        width: 100%;
+      }
+      .team-photo {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 4px solid #e5e7eb;
+        background: #f3f4f6;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        transition: all 0.4s ease;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+      }
+      .team-card:hover .team-photo {
+        transform: scale(1.1);
+        border-color: #2563eb;
+      }
+      .team-role {
+        color: #2563eb;
+        font-weight: 600;
+        font-size: 14px;
+        margin: 8px 0;
+        padding: 4px 12px;
+        background: rgba(37, 99, 235, 0.1);
+        border-radius: 20px;
+        display: inline-block;
+      }
+      .team-nim {
+        color: #6b7280;
+        font-size: 13px;
+        margin-top: 8px;
+        font-weight: 500;
+      }
+
+      /* Feature Cards */
+      .feature-card {
+        background: white;
+        padding: 25px;
+        border-radius: 20px;
+        text-align: center;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        height: 100%;
+        margin-bottom: 20px;
+        position: relative;
+        overflow: hidden;
+      }
+      .feature-card:before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.05), rgba(16, 185, 129, 0.05));
+        z-index: 1;
+        transition: 0.5s;
+        opacity: 0;
+      }
+      .feature-card:hover:before {
+        opacity: 1;
+      }
+      .feature-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+      }
+      .feature-icon {
+        font-size: 42px;
+        color: #2563eb;
+        margin-bottom: 18px;
+        transition: all 0.4s ease;
+        position: relative;
+        z-index: 2;
+      }
+      .feature-card:hover .feature-icon {
+        transform: scale(1.2) rotate(5deg);
+      }
+      
+      /* Plot containers */
+      .plot-container {
+        background: white;
+        padding: 20px;
+        border-radius: 18px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+        margin-bottom: 20px;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+      }
+      .plot-container:before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 4px;
+        background: linear-gradient(90deg, #2563eb, #10b981);
+      }
+      .plot-container:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 30px rgba(0,0,0,0.12);
+      }
+      
+      /* Tab navigation styling - CENTERED */
+      .nav-tabs {
+        display: flex;
+        justify-content: center !important;
+        border-bottom: 2px solid #e5e7eb;
+        margin-bottom: 25px;
+        flex-wrap: wrap;
+      }
+      .nav-tabs > li {
+        float: none !important;
+        display: inline-block !important;
+      }
+      .nav-tabs > li > a {
+        border: none !important;
+        border-radius: 12px !important;
+        padding: 12px 24px !important;
+        margin: 0 5px !important;
+        color: #6b7280 !important;
+        font-weight: 600 !important;
+        font-size: 15px !important;
+        transition: all 0.3s ease !important;
+        background: rgba(255,255,255,0.7) !important;
+        border: 1px solid rgba(229, 231, 235, 0.5) !important;
+      }
+      .nav-tabs > li > a:hover {
+        background: rgba(37, 99, 235, 0.08) !important;
+        color: #2563eb !important;
+        transform: translateY(-2px);
+        border-color: rgba(37, 99, 235, 0.3) !important;
+      }
+      .nav-tabs > li.active > a {
+        background: linear-gradient(135deg, #2563eb, #10b981) !important;
+        color: white !important;
+        border: none !important;
+        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.3) !important;
+      }
+      
+      /* Logo grid untuk beranda */
+      .logo-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 20px;
+        margin: 40px 0;
+        padding: 30px;
+        background: rgba(255,255,255,0.9);
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+      }
+      .logo-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 15px;
+        border-radius: 15px;
+        background: white;
+        transition: all 0.3s ease;
+      }
+      .logo-item:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+      }
+      .logo-icon {
+        font-size: 36px;
+        margin-bottom: 10px;
+        color: #2563eb;
+      }
+      .logo-text {
+        font-size: 14px;
+        font-weight: 600;
+        color: #374151;
+      }
+      
+      /* Peta styling */
+      .map-container {
+        background: white;
+        padding: 20px;
+        border-radius: 18px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+        margin-bottom: 20px;
+        height: 500px;
+      }
+      
+      /* Filter Panel di Atas - DIPERBAIKI */
+      .filter-panel {
+        background: rgba(255,255,255,0.9);
+        padding: 25px;
+        border-radius: 22px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        margin-bottom: 30px;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(200,200,200,0.2);
+        position: relative;
+        z-index: 100;
+      }
+      .filter-title {
+        text-align: center;
+        margin-bottom: 20px;
+        color: #1f2937;
+        font-weight: 700;
+      }
+      
+      /* Clear space for content */
+      .content-space {
+        margin-top: 30px;
+      }
+      
+      /* Animation classes */
+      .fade-in {
+        animation: fadeIn 0.6s ease;
+      }
+      .slide-up {
+        animation: slideUp 0.6s ease;
+      }
+      .pulse {
+        animation: pulse 2s infinite;
+      }
+      
+      @keyframes slideUp {
+        from { opacity: 0; transform: translateY(30px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      
+      @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+      }
+      
+      /* Section headers */
+      .section-header {
+        text-align: center;
+        margin: 40px 0 30px;
+        position: relative;
+      }
+      .section-header h3 {
+        display: inline-block;
+        padding-bottom: 10px;
+        position: relative;
+        color: #1f2937;
+      }
+      .section-header h3:after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 80px;
+        height: 4px;
+        background: linear-gradient(90deg, #2563eb, #10b981);
+        border-radius: 2px;
+      }
+      
+      /* Stat summary box */
+      .stat-summary-box {
+        background: #f8fafc;
+        padding: 15px;
+        border-radius: 12px;
+        border-left: 4px solid #2563eb;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        line-height: 1.4;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      
+      /* Responsive adjustments */
+      @media (max-width: 768px) {
+        .hero {
+          height: 400px;
+          padding: 30px;
+        }
+        .hero-title {
+          font-size: 32px;
+        }
+        .hero-sub {
+          font-size: 15px;
+        }
+        .navbar-apple {
+          padding: 10px 20px;
+          gap: 15px;
+          font-size: 14px;
+        }
+        .filter-panel {
+          padding: 15px;
+        }
+      }
+    "))
+  ),
+  
+  # =====================================================
+  # FLOATING NAVBAR (4 MENU)
+  # =====================================================
+  div(class="navbar-apple",
+      actionButton("nav_home", "Beranda", class="navbar-item"),
+      actionButton("nav_dashboard", "Dashboard Utama", class="navbar-item"),
+      actionButton("nav_statistics", "Analisis Statistik", class="navbar-item"),
+      actionButton("nav_team", "About Team", class="navbar-item")
+  ),
+  
+  # Main container
+  div(class="main-container",
+      
+      # =====================================================
+      # PAGE: BERANDA DENGAN GAMBAR
+      # =====================================================
+      div(id="page_beranda", class="page-content active",
+          
+          # HERO SECTION DENGAN BACKGROUND GAMBAR
+          div(class="hero fade-in",
+              h1(class="hero-title", "Digital Ecosystem Dashboard"),
+              p(class="hero-sub",
+                "Platform analitik canggih untuk menganalisis kinerja ekosistem digital global. Dashboard ini memberikan insight mendalam tentang revenue perusahaan teknologi, pangsa pasar, pertumbuhan industri, dan tren ekonomi digital di berbagai negara."),
+              actionButton("btn_to_dashboard", "Mulai Eksplorasi", 
+                           class="hero-cta pulse")
+          ),
+          
+          # LOGO GRID PERUSAHAAN TEKNOLOGI
+          div(class="section-header",
+              h3("Perusahaan Teknologi Global")
+          ),
+          
+          div(class="logo-grid slide-up",
+              div(class="logo-item", 
+                  div(class="logo-icon", icon("microsoft")),
+                  div(class="logo-text", "Microsoft")
+              ),
+              div(class="logo-item",
+                  div(class="logo-icon", icon("google")),
+                  div(class="logo-text", "Google")
+              ),
+              div(class="logo-item",
+                  div(class="logo-icon", icon("apple")),
+                  div(class="logo-text", "Apple")
+              ),
+              div(class="logo-item",
+                  div(class="logo-icon", icon("amazon")),
+                  div(class="logo-text", "Amazon")
+              ),
+              div(class="logo-item",
+                  div(class="logo-icon", icon("facebook")),
+                  div(class="logo-text", "Meta")
+              ),
+              div(class="logo-item",
+                  div(class="logo-icon", icon("twitter")),
+                  div(class="logo-text", "Twitter")
+              )
+          ),
+          
+          # KPI GLOBAL (TANPA FILTER)
+          div(class="section-header",
+              h3("Snapshot Ekosistem Digital Global")
+          ),
+          
+          fluidRow(
+            column(3, div(class="kpi-box slide-up",
+                          div(class="kpi-title","Total Revenue Global"),
+                          div(class="kpi-value", textOutput("kpi_rev"))
+            )),
+            column(3, div(class="kpi-box slide-up",
+                          div(class="kpi-title","Jumlah Negara"),
+                          div(class="kpi-value", textOutput("kpi_country"))
+            )),
+            column(3, div(class="kpi-box slide-up",
+                          div(class="kpi-title","Jumlah Perusahaan"),
+                          div(class="kpi-value", textOutput("kpi_company"))
+            )),
+            column(3, div(class="kpi-box slide-up",
+                          div(class="kpi-title","Rata-rata Pertumbuhan Tahunan"),
+                          div(class="kpi-value", textOutput("kpi_growth"))
+            ))
+          ),
+          
+          # FITUR UTAMA
+          div(class="section-header",
+              h3("Fitur Utama Dashboard")
+          ),
+          
+          fluidRow(
+            column(4, div(class="feature-card fade-in",
+                          div(class="feature-icon", icon("chart-line")),
+                          h4("Dashboard Utama"),
+                          p("Analisis komprehensif dengan filter interaktif untuk mengeksplorasi data per negara dan perusahaan.")
+            )),
+            column(4, div(class="feature-card fade-in",
+                          div(class="feature-icon", icon("chart-bar")),
+                          h4("Analisis Statistik"),
+                          p("Visualisasi mendalam: korelasi, distribusi, dan analisis tren untuk pengambilan keputusan.")
+            )),
+            column(4, div(class="feature-card fade-in",
+                          div(class="feature-icon", icon("users")),
+                          h4("Team Collaboration"),
+                          p("Dikembangkan oleh tim spesialis data dengan expertise di berbagai bidang analitik.")
+            ))
+          ),
+          
+          # DATA SOURCE
+          div(class="card-premium fade-in", style="margin-top: 40px;",
+              h4("Sumber Data"),
+              p("Dashboard ini menggunakan data perusahaan teknologi global yang dikumpulkan dan diproses dari berbagai sumber terpercaya. Data mencakup:", style="margin-bottom: 15px;"),
+              tags$ul(
+                tags$li("Revenue dan kinerja keuangan perusahaan"),
+                tags$li("Data pengguna mobile dan penetrasi digital"),
+                tags$li("Indikator ekonomi digital per negara"),
+                tags$li("Trend pertumbuhan industri teknologi")
+              ),
+              hr(),
+              p(icon("database"), " Data Source: Company financial reports, World Bank, Statista", 
+                style="color: #6b7280; font-size: 14px; margin-top: 15px;")
+          )
+      ),
+      
+      # =====================================================
+      # PAGE: DASHBOARD UTAMA DENGAN BANYAK GRAFIK - DIPERBAIKI
+      # =====================================================
+      div(id="page_dashboard", class="page-content",
+          
+          h2("Dashboard Utama", style="margin-top: 15px; text-align: center;"),
+          p("Eksplorasi data dengan filter interaktif. Pilih tahun dan negara untuk melihat analisis spesifik.", 
+            style="color: #6b7280; margin-bottom: 30px; text-align: center;"),
+          
+          # FILTER PANEL DI ATAS (CENTERED)
+          div(class="filter-panel fade-in",
+              h4(class="filter-title", "🎯 Filter Dashboard"),
+              fluidRow(
+                column(4,
+                       selectInput("dash_year","Pilih Tahun:",
+                                   choices = c("Semua Tahun", year_list), selected = "Semua Tahun",
+                                   width = "100%")
+                ),
+                column(4,
+                       selectInput("dash_country","Pilih Negara:",
+                                   choices = c("Semua Negara", country_list), 
+                                   selected = "Semua Negara",
+                                   width = "100%")
+                ),
+                column(4,
+                       checkboxInput("filter_company", "Filter Perusahaan per Negara", 
+                                     value = FALSE, width = "100%")
+                )
+              ),
+              conditionalPanel(
+                condition = "input.filter_company == true && input.dash_country != 'Semua Negara'",
+                fluidRow(
+                  column(12,
+                         uiOutput("company_filter_ui")
+                  )
+                )
+              ),
+              hr(),
+              uiOutput("country_summary_box")
+          ),
+          
+          # SPACE UNTUK KONTEN
+          div(class="content-space",
+              fluidRow(
+                column(12,
+                       div(class="card-premium fade-in",
+                           tabsetPanel(
+                             # TAB 1: GLOBAL OVERVIEW
+                             tabPanel("🌍 Global Overview",
+                                      br(),
+                                      fluidRow(
+                                        column(4, div(class="kpi-box",
+                                                      div(class="kpi-title","Total Revenue"),
+                                                      div(class="kpi-value", textOutput("dash_kpi_revenue")))),
+                                        column(4, div(class="kpi-box",
+                                                      div(class="kpi-title","Total Mobile Users"),
+                                                      div(class="kpi-value", textOutput("dash_kpi_mobile")))),
+                                        column(4, div(class="kpi-box",
+                                                      div(class="kpi-title","Jumlah Perusahaan"),
+                                                      div(class="kpi-value", textOutput("dash_kpi_company"))))
+                                      ),
+                                      br(),
+                                      fluidRow(
+                                        column(6, 
+                                               div(class="plot-container",
+                                                   h5("📱 Top 10 Mobile Users by Country"),
+                                                   plotOutput("chart_top_mobile", height = "300px")
+                                               )
+                                        ),
+                                        column(6, 
+                                               div(class="plot-container",
+                                                   h5("💰 Top 10 Revenue by Country"),
+                                                   plotOutput("chart_top_revenue", height = "300px")
+                                               )
+                                        )
+                                      ),
+                                      br(),
+                                      fluidRow(
+                                        column(6,
+                                               div(class="plot-container",
+                                                   h5("📈 Revenue Growth Trend"),
+                                                   plotlyOutput("chart_revenue_trend", height = "300px")
+                                               )
+                                        ),
+                                        column(6,
+                                               div(class="plot-container",
+                                                   h5("🏢 Top Companies"),
+                                                   plotOutput("chart_top_company", height = "300px")
+                                               )
+                                        )
+                                      ),
+                                      br(),
+                                      div(class="plot-container",
+                                          h5("🌐 Digital Economy Index by Country"),
+                                          plotlyOutput("chart_digital_index", height = "350px")
+                                      ),
+                                      br(),
+                                      div(class="map-container",
+                                          h5("🗺️ World Map - Revenue Distribution"),
+                                          plotlyOutput("world_map", height = "400px")
+                                      )
+                             ),
+                             
+                             # TAB 2: NEGARA & PERUSAHAAN
+                             tabPanel("🏛️ Negara & Perusahaan",
+                                      br(),
+                                      h4("📋 Ringkasan Negara", style="text-align: center;"),
+                                      DTOutput("tbl_country"),
+                                      br(),
+                                      h4("🏆 Top Perusahaan", style="text-align: center;"),
+                                      div(class="plot-container",
+                                          plotOutput("chart_company_bar", height = "350px")
+                                      ),
+                                      br(),
+                                      h4("📊 Detail Perusahaan", style="text-align: center;"),
+                                      DTOutput("tbl_company")
+                             ),
+                             
+                             # TAB 3: DOWNLOAD DATA
+                             tabPanel("💾 Download Data",
+                                      br(),
+                                      h4("📥 Download Dataset", style="text-align: center;"),
+                                      p("Pilih data yang ingin diunduh:", style="text-align: center;"),
+                                      div(style="text-align: center;",
+                                          downloadButton("dl_country","📁 Download Data Negara",
+                                                         class="btn btn-primary btn-lg",
+                                                         style="margin-right: 15px; padding: 12px 25px;"),
+                                          downloadButton("dl_company","💼 Download Data Perusahaan",
+                                                         class="btn btn-success btn-lg",
+                                                         style="padding: 12px 25px;")
+                                      ),
+                                      br(), br(),
+                                      h5("👀 Preview Data", style="text-align: center;"),
+                                      DTOutput("download_preview")
+                             )
+                           )
+                       )
+                )
+              )
+          )
+      ),
+      
+      # =====================================================
+      # PAGE: ANALISIS STATISTIK - KEMBALI KE LAYOUT SEBELUMNYA
+      # =====================================================
+      div(id="page_statistics", class="page-content",
+          
+          h2("Analisis Statistik", style="margin-top: 15px; text-align: center;"),
+          p("Analisis mendalam dan visualisasi statistik untuk memahami pola dan hubungan dalam data.",
+            style="color: #6b7280; margin-bottom: 30px; text-align: center;"),
+          
+          fluidRow(
+            column(3,
+                   div(class="card-premium fade-in",
+                       h4("⚙️ Pengaturan Analisis"),
+                       selectInput("stat_year", "Pilih Tahun:",
+                                   choices = c("Semua Tahun", year_list), selected = "Semua Tahun"),
+                       selectInput("stat_variable_x", "Variabel X:",
+                                   choices = c("Revenue_Billions", "Employees", "Growth_Rate",
+                                               "Innovation_Score", "Risk_Score", "Market_Share_Global"),
+                                   selected = "Revenue_Billions"),
+                       selectInput("stat_variable_y", "Variabel Y:",
+                                   choices = c("Revenue_Billions", "Employees", "Growth_Rate",
+                                               "Innovation_Score", "Risk_Score", "Market_Share_Global"),
+                                   selected = "Growth_Rate"),
+                       hr(),
+                       h5("📊 Statistik Deskriptif"),
+                       div(class="stat-summary-box",
+                           verbatimTextOutput("stat_summary")
+                       )
+                   )
+            ),
+            
+            column(9,
+                   div(class="card-premium fade-in",
+                       tabsetPanel(
+                         tabPanel("📊 Scatter Plot",
+                                  br(),
+                                  div(class="plot-container",
+                                      plotlyOutput("scatter_plot", height = "450px")
+                                  ),
+                                  br(),
+                                  p("Analisis hubungan antara dua variabel. Titik berwarna menunjukkan negara yang berbeda.",
+                                    style="text-align: center;")
+                         ),
+                         
+                         tabPanel("📈 Distribusi",
+                                  br(),
+                                  div(class="plot-container",
+                                      plotOutput("distribution_plot", height = "450px")
+                                  ),
+                                  br(),
+                                  p("Distribusi frekuensi variabel terpilih. Histogram menunjukkan sebaran data.",
+                                    style="text-align: center;")
+                         ),
+                         
+                         tabPanel("🔗 Korelasi",
+                                  br(),
+                                  div(class="plot-container",
+                                      plotOutput("correlation_plot", height = "450px")
+                                  ),
+                                  br(),
+                                  p("Heatmap korelasi antar variabel numerik. Warna menunjukkan kekuatan hubungan.",
+                                    style="text-align: center;")
+                         ),
+                         
+                         tabPanel("⏱️ Time Series",
+                                  br(),
+                                  div(class="plot-container",
+                                      plotlyOutput("time_series_plot", height = "450px")
+                                  ),
+                                  br(),
+                                  p("Perkembangan variabel terpilih sepanjang waktu. Garis menunjukkan tren.",
+                                    style="text-align: center;")
+                         ),
+                         
+                         tabPanel("📊 Box Plot",
+                                  br(),
+                                  div(class="plot-container",
+                                      plotlyOutput("box_plot", height = "450px")
+                                  ),
+                                  br(),
+                                  p("Distribusi data per negara dengan box plot.",
+                                    style="text-align: center;")
+                         )
+                       )
+                   )
+            )
+          )
+      ),
+      
+      # =====================================================
+      # PAGE: ABOUT TEAM DENGAN FOTO ASLI
+      # =====================================================
+      div(id="page_team", class="page-content",
+          
+          h2("Meet The Team", style="margin-top: 15px; text-align: center;"),
+          p("Tim pengembang dashboard yang terdiri dari profesional dengan latar belakang saling melengkapi.",
+            style="color: #6b7280; margin-bottom: 30px; text-align: center;"),
+          
+          fluidRow(
+            column(3,
+                   div(class="team-card fade-in",
+                       div(class="team-photo-container",
+                           img(src="https://raw.githubusercontent.com/muhakbaridris/visdat/4c9784053a0007bc2f2f617ac479c5a9bb98f168/www/akbar.jpg", 
+                               class="team-photo", alt="Muh. Akbar Idris")
+                       ),
+                       h4("Muh. Akbar Idris"),
+                       div(class="team-role", "Project Lead & Data Scientist"),
+                       p("Bertanggung jawab atas arsitektur data, model analitik, dan pengambilan keputusan berbasis data."),
+                       div(class="team-nim", "NIM: M0501241013")
+                   )),
+            
+            column(3,
+                   div(class="team-card fade-in",
+                       div(class="team-photo-container",
+                           img(src="https://raw.githubusercontent.com/muhakbaridris/visdat/4c9784053a0007bc2f2f617ac479c5a9bb98f168/www/desy.jpg", 
+                               class="team-photo", alt="Desy Endriani")
+                       ),
+                       h4("Desy Endriani"),
+                       div(class="team-role", "Data Analyst"),
+                       p("Menganalisis pola data, membuat visualisasi, dan menerjemahkan insight bisnis dari data."),
+                       div(class="team-nim", "NIM: M0501241051")
+                   )),
+            
+            column(3,
+                   div(class="team-card fade-in",
+                       div(class="team-photo-container",
+                           img(src="https://raw.githubusercontent.com/muhakbaridris/visdat/4c9784053a0007bc2f2f617ac479c5a9bb98f168/www/aini.jpg", 
+                               class="team-photo", alt="Nur Aini")
+                       ),
+                       h4("Nur Aini"),
+                       div(class="team-role", "UI/UX Designer & Frontend Developer"),
+                       p("Mendesain antarmuka pengguna, pengalaman pengguna, dan implementasi frontend dashboard."),
+                       div(class="team-nim", "NIM: M0501241058")
+                   )),
+            
+            column(3,
+                   div(class="team-card fade-in",
+                       div(class="team-photo-container",
+                           img(src="https://raw.githubusercontent.com/muhakbaridris/visdat/4c9784053a0007bc2f2f617ac479c5a9bb98f168/www/yusuf.jpg", 
+                               class="team-photo", alt="Syaifullah Yusuf Ramadhan")
+                       ),
+                       h4("Syaifullah Yusuf Ramadhan"),
+                       div(class="team-role", "Data Engineer & Web Scraper"),
+                       p("Mengumpulkan, membersihkan, dan memproses data dari berbagai sumber melalui web scraping."),
+                       div(class="team-nim", "NIM: M0501241077")
+                   ))
+          ),
+          
+          br(),
+          
+          div(class="card-premium fade-in",
+              h4("Proyek Digital Ecosystem Dashboard"),
+              p("Dashboard ini dikembangkan sebagai bagian dari proyek analisis ekosistem digital global. Tujuan proyek ini adalah:"),
+              tags$ul(
+                tags$li("Menyediakan platform analitik yang intuitif untuk memantau kinerja perusahaan teknologi"),
+                tags$li("Menganalisis tren ekonomi digital di berbagai negara"),
+                tags$li("Memberikan insight untuk pengambilan keputusan strategis"),
+                tags$li("Mengintegrasikan berbagai sumber data menjadi satu dashboard yang kohesif")
+              ),
+              p("Teknologi yang digunakan: R Shiny, dplyr, ggplot2, Plotly, dan berbagai paket analisis data."),
+              hr(),
+              div(style="text-align: center;",
+                  actionButton("btn_back_home", "🏠 Kembali ke Beranda", 
+                               class="btn btn-primary",
+                               style="padding: 10px 25px;")
+              )
+          )
+      )
+  )
+)
+
 # ============================================================================
 # DIGITAL ECOSYSTEM DASHBOARD — SERVER PREMIUM
 # BAGIAN 3 — Server Logic - FIX LOADING BUG SEDERHANA
@@ -89,10 +1267,6 @@ server <- function(input, output, session) {
   dashboard_year_data <- reactive({
     # Gunakan tryCatch untuk handle error
     tryCatch({
-      if (is.null(input$dash_year) || is.null(input$dash_country)) {
-        return(country_year)
-      }
-      
       if (input$dash_year == "Semua Tahun") {
         # Data untuk semua tahun
         if (input$dash_country == "Semua Negara") {
@@ -118,10 +1292,6 @@ server <- function(input, output, session) {
   # Company data with optional country filter
   dashboard_company_data <- reactive({
     tryCatch({
-      if (is.null(input$dash_year) || is.null(input$dash_country)) {
-        return(company_year)
-      }
-      
       if (input$dash_year == "Semua Tahun") {
         # Data untuk semua tahun
         if (input$dash_country == "Semua Negara" || !input$filter_company) {
@@ -254,6 +1424,8 @@ server <- function(input, output, session) {
   # 1. Top Mobile Users
   output$chart_top_mobile <- renderPlot({
     # Pastikan data tersedia
+    req(dashboard_year_data())
+    
     if (input$dash_country == "Semua Negara") {
       if (input$dash_year == "Semua Tahun") {
         data <- country_year %>%
@@ -294,6 +1466,8 @@ server <- function(input, output, session) {
   
   # 2. Top Revenue
   output$chart_top_revenue <- renderPlot({
+    req(dashboard_year_data())
+    
     if (input$dash_country == "Semua Negara") {
       if (input$dash_year == "Semua Tahun") {
         data <- country_year %>%
@@ -365,6 +1539,8 @@ server <- function(input, output, session) {
   
   # 4. Top Companies
   output$chart_top_company <- renderPlot({
+    req(dashboard_company_data())
+    
     data <- dashboard_company_data()
     
     if (nrow(data) > 0) {
@@ -412,6 +1588,8 @@ server <- function(input, output, session) {
   
   # 5. Digital Economy Index (Plotly)
   output$chart_digital_index <- renderPlotly({
+    req(dashboard_year_data())
+    
     data <- dashboard_year_data()
     
     if (nrow(data) > 0) {
@@ -445,6 +1623,8 @@ server <- function(input, output, session) {
   
   # 6. World Map - Revenue Distribution (DIPERBAIKI)
   output$world_map <- renderPlotly({
+    req(dashboard_year_data())
+    
     data <- dashboard_year_data()
     
     if (nrow(data) > 0) {
@@ -493,6 +1673,8 @@ server <- function(input, output, session) {
   
   # 7. Company Bar Chart for Negara & Perusahaan tab
   output$chart_company_bar <- renderPlot({
+    req(dashboard_company_data())
+    
     data <- dashboard_company_data()
     
     if (!is.null(input$selected_companies) && input$filter_company && 
@@ -922,6 +2104,22 @@ server <- function(input, output, session) {
       cat("Tidak ada data untuk variabel dan tahun yang dipilih.")
     }
   })
+  
+  # ============================================================
+  # FIX UNTUK LOADING BUG - SIMPLE SOLUTION
+  # ============================================================
+  
+  # Pre-load dashboard data when app starts
+  observe({
+    # Force initial load of dashboard data
+    invalidateLater(100)
+    isolate({
+      # Trigger reactive dependencies
+      output$dash_kpi_revenue
+      output$dash_kpi_mobile
+      output$dash_kpi_company
+    })
+  }, once = TRUE)
 }
 
 # ============================================================================
