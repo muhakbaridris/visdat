@@ -373,7 +373,7 @@ ui <- fluidPage(
       .card-premium:hover {
         transform: translateY(-5px);
         box-shadow: 0 18px 45px rgba(0,0,0,0.12);
-        border-color = rgba(37, 99, 235, 0.2);
+        border-color: rgba(37, 99, 235, 0.2);
       }
 
       /* KPI Counter dengan animasi */
@@ -1178,7 +1178,7 @@ ui <- fluidPage(
 
 # ============================================================================
 # DIGITAL ECOSYSTEM DASHBOARD — SERVER PREMIUM
-# BAGIAN 3 — Server Logic - FIX LOADING BUG SEDERHANA
+# BAGIAN 3 — Server Logic DIPERBAIKI
 # ============================================================================
 
 server <- function(input, output, session) {
@@ -1260,57 +1260,47 @@ server <- function(input, output, session) {
   })
   
   # ============================================================
-  # REACTIVE DATA FOR DASHBOARD - SIMPLE FIX
+  # REACTIVE DATA FOR DASHBOARD
   # ============================================================
   
-  # Data for selected year - SIMPLE FIX
+  # Data for selected year - INCLUDE ALL YEARS
   dashboard_year_data <- reactive({
-    # Gunakan tryCatch untuk handle error
-    tryCatch({
-      if (input$dash_year == "Semua Tahun") {
-        # Data untuk semua tahun
-        if (input$dash_country == "Semua Negara") {
-          country_year
-        } else {
-          country_year %>% filter(Country_Standard == input$dash_country)
-        }
-      } else if (input$dash_country == "Semua Negara") {
-        # Global data for selected year
-        country_year %>% filter(Year == as.numeric(input$dash_year))
+    if (input$dash_year == "Semua Tahun") {
+      # Data untuk semua tahun
+      if (input$dash_country == "Semua Negara") {
+        country_year
       } else {
-        # Country-specific data
-        country_year %>% 
-          filter(Year == as.numeric(input$dash_year), 
-                 Country_Standard == input$dash_country)
+        country_year %>% filter(Country_Standard == input$dash_country)
       }
-    }, error = function(e) {
-      # Return empty data frame jika error
-      data.frame()
-    })
+    } else if (input$dash_country == "Semua Negara") {
+      # Global data for selected year
+      country_year %>% filter(Year == as.numeric(input$dash_year))
+    } else {
+      # Country-specific data
+      country_year %>% 
+        filter(Year == as.numeric(input$dash_year), 
+               Country_Standard == input$dash_country)
+    }
   })
   
   # Company data with optional country filter
   dashboard_company_data <- reactive({
-    tryCatch({
-      if (input$dash_year == "Semua Tahun") {
-        # Data untuk semua tahun
-        if (input$dash_country == "Semua Negara" || !input$filter_company) {
-          company_year
-        } else {
-          company_year %>% filter(Country_Standard == input$dash_country)
-        }
-      } else if (input$dash_country == "Semua Negara" || !input$filter_company) {
-        # Global company data or when filter is off
-        company_year %>% filter(Year == as.numeric(input$dash_year))
+    if (input$dash_year == "Semua Tahun") {
+      # Data untuk semua tahun
+      if (input$dash_country == "Semua Negara" || !input$filter_company) {
+        company_year
       } else {
-        # Country-specific company data when filter is on
-        company_year %>% 
-          filter(Year == as.numeric(input$dash_year), 
-                 Country_Standard == input$dash_country)
+        company_year %>% filter(Country_Standard == input$dash_country)
       }
-    }, error = function(e) {
-      data.frame()
-    })
+    } else if (input$dash_country == "Semua Negara" || !input$filter_company) {
+      # Global company data or when filter is off
+      company_year %>% filter(Year == as.numeric(input$dash_year))
+    } else {
+      # Country-specific company data when filter is on
+      company_year %>% 
+        filter(Year == as.numeric(input$dash_year), 
+               Country_Standard == input$dash_country)
+    }
   })
   
   # ============================================================
@@ -1318,6 +1308,8 @@ server <- function(input, output, session) {
   # ============================================================
   
   output$company_filter_ui <- renderUI({
+    req(input$dash_country)
+    
     if (input$dash_country != "Semua Negara") {
       if (input$dash_year == "Semua Tahun") {
         companies_in_country <- company_year %>%
@@ -1423,9 +1415,6 @@ server <- function(input, output, session) {
   
   # 1. Top Mobile Users
   output$chart_top_mobile <- renderPlot({
-    # Pastikan data tersedia
-    req(dashboard_year_data())
-    
     if (input$dash_country == "Semua Negara") {
       if (input$dash_year == "Semua Tahun") {
         data <- country_year %>%
@@ -1466,8 +1455,6 @@ server <- function(input, output, session) {
   
   # 2. Top Revenue
   output$chart_top_revenue <- renderPlot({
-    req(dashboard_year_data())
-    
     if (input$dash_country == "Semua Negara") {
       if (input$dash_year == "Semua Tahun") {
         data <- country_year %>%
@@ -1539,8 +1526,6 @@ server <- function(input, output, session) {
   
   # 4. Top Companies
   output$chart_top_company <- renderPlot({
-    req(dashboard_company_data())
-    
     data <- dashboard_company_data()
     
     if (nrow(data) > 0) {
@@ -1588,8 +1573,6 @@ server <- function(input, output, session) {
   
   # 5. Digital Economy Index (Plotly)
   output$chart_digital_index <- renderPlotly({
-    req(dashboard_year_data())
-    
     data <- dashboard_year_data()
     
     if (nrow(data) > 0) {
@@ -1623,8 +1606,6 @@ server <- function(input, output, session) {
   
   # 6. World Map - Revenue Distribution (DIPERBAIKI)
   output$world_map <- renderPlotly({
-    req(dashboard_year_data())
-    
     data <- dashboard_year_data()
     
     if (nrow(data) > 0) {
@@ -1673,8 +1654,6 @@ server <- function(input, output, session) {
   
   # 7. Company Bar Chart for Negara & Perusahaan tab
   output$chart_company_bar <- renderPlot({
-    req(dashboard_company_data())
-    
     data <- dashboard_company_data()
     
     if (!is.null(input$selected_companies) && input$filter_company && 
@@ -2104,22 +2083,6 @@ server <- function(input, output, session) {
       cat("Tidak ada data untuk variabel dan tahun yang dipilih.")
     }
   })
-  
-  # ============================================================
-  # FIX UNTUK LOADING BUG - SIMPLE SOLUTION
-  # ============================================================
-  
-  # Pre-load dashboard data when app starts
-  observe({
-    # Force initial load of dashboard data
-    invalidateLater(100)
-    isolate({
-      # Trigger reactive dependencies
-      output$dash_kpi_revenue
-      output$dash_kpi_mobile
-      output$dash_kpi_company
-    })
-  }, once = TRUE)
 }
 
 # ============================================================================
